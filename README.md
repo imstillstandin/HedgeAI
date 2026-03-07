@@ -1,0 +1,2 @@
+# HedgeAI
+fx trader radar
