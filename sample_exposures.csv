@@ -1,0 +1,4 @@
+currency,amount,type,due_date,rate
+USD,150000,payable,2026-04-25,0.66
+USD,90000,payable,2026-05-15,0.66
+EUR,50000,receivable,2026-04-30,0.61
