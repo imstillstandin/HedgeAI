@@ -10,6 +10,7 @@ SRC_PATH = PROJECT_ROOT / "src"
 if str(SRC_PATH) not in sys.path:
     sys.path.insert(0, str(SRC_PATH))
 
+from fx_radar.alert_engine import generate_alerts
 from fx_radar.exposure_engine import aggregate_exposures
 from fx_radar.ingestion import clean_dataframe
 from fx_radar.presentation import format_currency, generate_summary_text
@@ -176,6 +177,15 @@ st.write(
     "of FX market movements, and suggests a simple hedge range based on size and timing. "
     "It is designed to support decision-making, not predict market direction."
 )
+
+
+alerts_df = generate_alerts(scenario_df)
+
+st.subheader("9. Alerts Preview")
+if alerts_df.empty:
+    st.success("No major alerts triggered right now.")
+else:
+    st.dataframe(alerts_df, use_container_width=True)
 
 with st.expander("Sample CSV format"):
     st.code(

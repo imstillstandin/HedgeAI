@@ -12,6 +12,7 @@ SRC_PATH = PROJECT_ROOT / "src"
 if str(SRC_PATH) not in sys.path:
     sys.path.insert(0, str(SRC_PATH))
 
+from fx_radar.alert_engine import generate_alerts
 from fx_radar.exposure_engine import aggregate_exposures
 from fx_radar.ingestion import clean_dataframe, validate_dataframe
 from fx_radar.risk_engine import add_scenarios, calculate_health_score, scenario_analysis, suggest_hedge_range
@@ -87,6 +88,24 @@ class ExposureAndRiskTests(unittest.TestCase):
         score = calculate_health_score(row)
         self.assertGreaterEqual(score, 0)
         self.assertLessEqual(score, 100)
+
+
+    def test_generate_alerts_returns_risk_and_settlement_alerts(self):
+        scenario_df = pd.DataFrame(
+            [
+                {
+                    "currency": "USD",
+                    "type": "payable",
+                    "total_amount": 200000,
+                    "days_to_due": 10,
+                    "impact_5pct": 6000,
+                }
+            ]
+        )
+        alerts = generate_alerts(scenario_df, impact_threshold_aud=3000, settlement_window_days=30)
+        self.assertGreaterEqual(len(alerts), 2)
+        self.assertIn("risk_threshold", set(alerts["category"]))
+        self.assertIn("settlement_window", set(alerts["category"]))
 
     def test_add_scenarios_includes_core_columns(self):
         summary = pd.DataFrame(
