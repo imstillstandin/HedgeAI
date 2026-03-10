@@ -1,186 +1,21 @@
-import streamlit as st
+from __future__ import annotations
+
 import pandas as pd
-from datetime import date
+import streamlit as st
+from pathlib import Path
+import sys
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+SRC_PATH = PROJECT_ROOT / "src"
+if str(SRC_PATH) not in sys.path:
+    sys.path.insert(0, str(SRC_PATH))
+
+from fx_radar.exposure_engine import aggregate_exposures
+from fx_radar.ingestion import clean_dataframe
+from fx_radar.presentation import format_currency, generate_summary_text
+from fx_radar.risk_engine import add_scenarios
 
 st.set_page_config(page_title="FX Risk Radar", layout="wide")
-
-REQUIRED_COLUMNS = {"currency", "amount", "type", "due_date", "rate"}
-
-
-def validate_dataframe(df: pd.DataFrame):
-    missing = REQUIRED_COLUMNS - set(df.columns)
-    if missing:
-        return False, f"Missing columns: {', '.join(sorted(missing))}"
-    return True, "OK"
-
-
-def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    df.columns = [c.lower().strip() for c in df.columns]
-
-    valid, message = validate_dataframe(df)
-    if not valid:
-        raise ValueError(message)
-
-    df["currency"] = df["currency"].astype(str).str.upper().str.strip()
-    df["amount"] = pd.to_numeric(df["amount"], errors="raise")
-    df["rate"] = pd.to_numeric(df["rate"], errors="raise")
-    df["type"] = df["type"].astype(str).str.lower().str.strip()
-    df["due_date"] = pd.to_datetime(df["due_date"], errors="raise").dt.date
-
-    if not df["type"].isin(["payable", "receivable"]).all():
-        invalid_types = df.loc[~df["type"].isin(["payable", "receivable"]), "type"].unique()
-        raise ValueError(
-            f"type column must contain only 'payable' or 'receivable'. Found: {', '.join(map(str, invalid_types))}"
-        )
-
-    if (df["amount"] <= 0).any():
-        raise ValueError("All amounts must be greater than zero.")
-
-    if (df["rate"] <= 0).any():
-        raise ValueError("All rates must be greater than zero.")
-
-    return df
-
-
-def aggregate_exposures(df: pd.DataFrame) -> pd.DataFrame:
-    grouped = (
-        df.groupby(["currency", "type"], as_index=False)
-        .agg(
-            total_amount=("amount", "sum"),
-            avg_rate=("rate", "mean"),
-            nearest_due_date=("due_date", "min"),
-            line_count=("amount", "count"),
-        )
-        .sort_values(["currency", "type"])
-    )
-    return grouped
-
-
-def scenario_analysis(amount: float, rate: float):
-    current_aud = amount / rate
-
-    rate_5_down = rate * 0.95
-    rate_10_down = rate * 0.90
-
-    aud_5_down = amount / rate_5_down
-    aud_10_down = amount / rate_10_down
-
-    impact_5 = aud_5_down - current_aud
-    impact_10 = aud_10_down - current_aud
-
-    return {
-        "current_aud_value": round(current_aud, 2),
-        "aud_value_if_aud_weakens_5pct": round(aud_5_down, 2),
-        "aud_value_if_aud_weakens_10pct": round(aud_10_down, 2),
-        "impact_5pct": round(impact_5, 2),
-        "impact_10pct": round(impact_10, 2),
-    }
-
-
-def suggest_hedge_range(amount: float, days_to_due: int, exposure_type: str) -> str:
-    if exposure_type == "payable":
-        if amount >= 100000 and days_to_due <= 60:
-            return "40% to 60%"
-        if amount >= 50000 and days_to_due <= 90:
-            return "20% to 40%"
-        return "Monitor or low hedge need"
-
-    if exposure_type == "receivable":
-        if amount >= 100000 and days_to_due <= 60:
-            return "30% to 50%"
-        if amount >= 50000 and days_to_due <= 90:
-            return "15% to 30%"
-        return "Monitor or low hedge need"
-
-    return "No suggestion"
-
-
-def calculate_health_score(row) -> int:
-    score = 100
-    impact_5 = abs(row["impact_5pct"])
-
-    if impact_5 > 20000:
-        score -= 30
-    elif impact_5 > 10000:
-        score -= 20
-    elif impact_5 > 5000:
-        score -= 10
-
-    if row["days_to_due"] <= 30:
-        score -= 15
-    elif row["days_to_due"] <= 60:
-        score -= 10
-
-    if row["type"] == "payable":
-        score -= 5
-
-    return max(score, 0)
-
-
-def add_scenarios(summary: pd.DataFrame) -> pd.DataFrame:
-    rows = []
-    today = date.today()
-
-    for _, row in summary.iterrows():
-        scenarios = scenario_analysis(
-            amount=row["total_amount"],
-            rate=row["avg_rate"],
-        )
-
-        days_to_due = (row["nearest_due_date"] - today).days
-
-        rows.append(
-            {
-                "currency": row["currency"],
-                "type": row["type"],
-                "total_amount": row["total_amount"],
-                "avg_rate": round(row["avg_rate"], 4),
-                "nearest_due_date": row["nearest_due_date"],
-                "days_to_due": days_to_due,
-                "line_count": row["line_count"],
-                **scenarios,
-            }
-        )
-
-    result = pd.DataFrame(rows)
-    result["suggested_hedge_range"] = result.apply(
-        lambda r: suggest_hedge_range(
-            amount=r["total_amount"],
-            days_to_due=r["days_to_due"],
-            exposure_type=r["type"],
-        ),
-        axis=1,
-    )
-    result["fx_health_score"] = result.apply(calculate_health_score, axis=1)
-    return result.sort_values(["currency", "type"])
-
-
-def format_currency(value: float) -> str:
-    return f"${value:,.0f}"
-
-
-def generate_summary_text(row) -> str:
-    if row["type"] == "payable":
-        effect_text = "increase your AUD cost"
-    else:
-        effect_text = "increase your AUD value received"
-
-    if row["days_to_due"] < 0:
-        due_text = f"{abs(row['days_to_due'])} days overdue/past due"
-    elif row["days_to_due"] == 0:
-        due_text = "due today"
-    else:
-        due_text = f"due in {row['days_to_due']} days"
-
-    return (
-        f"**{row['currency']} {row['type']} exposure**  \n"
-        f"- Total exposure: {row['total_amount']:,.0f} {row['currency']}  \n"
-        f"- Timing: {due_text}  \n"
-        f"- A 5% weakening in AUD could {effect_text} by about **{format_currency(abs(row['impact_5pct']))}**  \n"
-        f"- Suggested hedge range: **{row['suggested_hedge_range']}**  \n"
-        f"- FX Health Score: **{row['fx_health_score']}/100**"
-    )
 
 
 def build_demo_data() -> pd.DataFrame:

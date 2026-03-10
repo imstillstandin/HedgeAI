@@ -11,3 +11,8 @@ fx trader radar
    ```
 
 This will automatically install the required packages (Streamlit and Pandas) and launch the FX Risk Radar application.
+
+
+## Product planning
+
+- Milestone build plan: `Docs/MILESTONE_BUILD_PLAN.md`
