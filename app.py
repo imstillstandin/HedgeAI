@@ -17,18 +17,14 @@ from fx_radar.presentation import format_currency, generate_summary_text
 from fx_radar.risk_engine import add_scenarios
 
 st.set_page_config(page_title="FX Risk Radar", layout="wide")
+import pandas as pd
+import streamlit as st
 
+from hedgeai.data_processing import add_scenarios, aggregate_exposures, clean_dataframe
+from hedgeai.presentation import build_demo_data, format_currency, generate_summary_text
+from hedgeai.risk import calculate_health_score, scenario_analysis, suggest_hedge_range
 
-def build_demo_data() -> pd.DataFrame:
-    return pd.DataFrame(
-        [
-            {"currency": "USD", "amount": 180000, "type": "payable", "due_date": "2026-04-20", "rate": 0.66},
-            {"currency": "USD", "amount": 95000, "type": "payable", "due_date": "2026-05-18", "rate": 0.66},
-            {"currency": "EUR", "amount": 70000, "type": "receivable", "due_date": "2026-04-28", "rate": 0.61},
-            {"currency": "GBP", "amount": 30000, "type": "payable", "due_date": "2026-05-05", "rate": 0.49},
-        ]
-    )
-
+st.set_page_config(page_title="FX Risk Radar", layout="wide")
 
 st.title("FX Risk Radar")
 st.caption("Upload FX exposures, quantify the risk, and get a practical hedge suggestion.")
@@ -101,7 +97,12 @@ st.subheader("2. Validated Input Data")
 st.dataframe(df, use_container_width=True)
 
 summary = aggregate_exposures(df)
-scenario_df = add_scenarios(summary)
+scenario_df = add_scenarios(
+    summary,
+    scenario_fn=scenario_analysis,
+    hedge_fn=suggest_hedge_range,
+    health_fn=calculate_health_score,
+)
 
 st.subheader("3. Key Metrics")
 total_payables = scenario_df.loc[scenario_df["type"] == "payable", "current_aud_value"].sum()
@@ -129,7 +130,18 @@ display_summary["avg_rate"] = display_summary["avg_rate"].map(lambda x: f"{x:.4f
 st.dataframe(display_summary, use_container_width=True)
 
 st.subheader("5. Risk Scenarios")
-scenario_display = scenario_df.copy()
+selected_currencies = st.multiselect(
+    "Filter currencies",
+    options=sorted(scenario_df["currency"].unique()),
+    default=sorted(scenario_df["currency"].unique()),
+)
+
+if selected_currencies:
+    filtered_scenario_df = scenario_df[scenario_df["currency"].isin(selected_currencies)].copy()
+else:
+    filtered_scenario_df = scenario_df.copy()
+
+scenario_display = filtered_scenario_df.copy()
 for col in [
     "current_aud_value",
     "aud_value_if_aud_weakens_5pct",
@@ -159,6 +171,13 @@ st.dataframe(
         ]
     ],
     use_container_width=True,
+)
+
+st.download_button(
+    "Download filtered scenario table as CSV",
+    data=filtered_scenario_df.to_csv(index=False).encode("utf-8"),
+    file_name="fx_risk_scenarios.csv",
+    mime="text/csv",
 )
 
 st.subheader("6. FX Health Check")

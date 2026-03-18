@@ -3,7 +3,7 @@ fx trader radar
 
 ## Setup and Run
 
-1. Ensure you have Python and pip installed.
+1. Ensure you have Python 3.10+ and pip installed.
 2. Run the setup script to install dependencies and start the app:
 
    ```bash
@@ -16,3 +16,4 @@ This will automatically install the required packages (Streamlit and Pandas) and
 ## Product planning
 
 - Milestone build plan: `Docs/MILESTONE_BUILD_PLAN.md`
+The script installs required packages from `requirements.txt` and launches FX Risk Radar on port `8501`.
