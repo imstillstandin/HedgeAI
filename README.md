@@ -10,4 +10,10 @@ fx trader radar
    ./run.sh
    ```
 
+This will automatically install the required packages (Streamlit and Pandas) and launch the FX Risk Radar application.
+
+
+## Product planning
+
+- Milestone build plan: `Docs/MILESTONE_BUILD_PLAN.md`
 The script installs required packages from `requirements.txt` and launches FX Risk Radar on port `8501`.
