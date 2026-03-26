@@ -1,5 +1,7 @@
-SME FX Behaviour Engine
-Purpose
+# SME FX Behaviour Engine
+
+## Purpose
+
 This document captures observed behavioural patterns of SME clients dealing with foreign exchange exposure.
 These insights should guide:
 alert design
@@ -9,6 +11,7 @@ risk calculations
 product UX
 The goal is to replicate the thinking process of an experienced FX dealer advising SME clients.
 Core Behaviour Insights
+
 1. Most SMEs Do Not Actively Hedge
 The majority of SMEs engaged in international trade do not use formal FX hedging strategies.
 Key findings:
@@ -165,20 +168,26 @@ Most FX tools are built around:
 Copy code
 
 market data
+
 + financial models
 FX Risk Radar instead combines:
 Copy code
 
 market data
+
 + behavioural insights
 + risk calculations
 This allows the platform to behave like an experienced FX advisor rather than a simple calculator.
+
 Key Takeaway
+
 SMEs do not need complex trading tools.
 They need a system that helps them answer three questions:
+
 Copy code
 
 What is my FX exposure?
 What is the financial risk?
 What should I consider doing?
+
 FX Risk Radar exists to provide these answers continuously
