@@ -37,6 +37,18 @@ def suggest_hedge_range(amount: float, days_to_due: int, exposure_type: str) -> 
     return "No suggestion"
 
 
+def classify_urgency(days_to_due: int, impact_5pct: float):
+    abs_impact = abs(impact_5pct)
+
+    if days_to_due <= 14 or abs_impact >= 20000:
+        return "critical", "Near-due and/or high financial impact — review hedge action now."
+    if days_to_due <= 30 or abs_impact >= 10000:
+        return "high", "Material near-term risk — consider partial hedging soon."
+    if days_to_due <= 60 or abs_impact >= 5000:
+        return "medium", "Moderate exposure risk — monitor closely and plan next steps."
+    return "low", "Lower immediate risk — continue monitoring."
+
+
 def calculate_health_score(row) -> int:
     score = 100
     impact_5 = abs(row["impact_5pct"])

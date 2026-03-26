@@ -15,7 +15,7 @@ if str(SRC_PATH) not in sys.path:
 from fx_radar.alert_engine import generate_alerts
 from fx_radar.exposure_engine import aggregate_exposures
 from fx_radar.ingestion import clean_dataframe, validate_dataframe
-from fx_radar.risk_engine import add_scenarios, calculate_health_score, scenario_analysis, suggest_hedge_range
+from fx_radar.risk_engine import add_scenarios, calculate_health_score, classify_urgency, scenario_analysis, suggest_hedge_range
 
 
 class IngestionTests(unittest.TestCase):
@@ -89,6 +89,11 @@ class ExposureAndRiskTests(unittest.TestCase):
         self.assertGreaterEqual(score, 0)
         self.assertLessEqual(score, 100)
 
+    def test_classify_urgency_thresholds(self):
+        self.assertEqual(classify_urgency(7, 2000)[0], "critical")
+        self.assertEqual(classify_urgency(25, 2000)[0], "high")
+        self.assertEqual(classify_urgency(45, 2000)[0], "medium")
+        self.assertEqual(classify_urgency(90, 2000)[0], "low")
 
     def test_generate_alerts_returns_risk_and_settlement_alerts(self):
         scenario_df = pd.DataFrame(
@@ -121,7 +126,15 @@ class ExposureAndRiskTests(unittest.TestCase):
             ]
         )
         scen = add_scenarios(summary)
-        expected = {"impact_5pct", "impact_10pct", "suggested_hedge_range", "fx_health_score", "days_to_due"}
+        expected = {
+            "impact_5pct",
+            "impact_10pct",
+            "suggested_hedge_range",
+            "urgency_level",
+            "urgency_message",
+            "fx_health_score",
+            "days_to_due",
+        }
         self.assertTrue(expected.issubset(set(scen.columns)))
 
 

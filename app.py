@@ -96,6 +96,18 @@ def suggest_hedge_range(amount: float, days_to_due: int, exposure_type: str) -> 
     return "No suggestion"
 
 
+def classify_urgency(days_to_due: int, impact_5pct: float):
+    abs_impact = abs(impact_5pct)
+
+    if days_to_due <= 14 or abs_impact >= 20000:
+        return "critical", "Near-due and/or high financial impact — review hedge action now."
+    if days_to_due <= 30 or abs_impact >= 10000:
+        return "high", "Material near-term risk — consider partial hedging soon."
+    if days_to_due <= 60 or abs_impact >= 5000:
+        return "medium", "Moderate exposure risk — monitor closely and plan next steps."
+    return "low", "Lower immediate risk — continue monitoring."
+
+
 def calculate_health_score(row) -> int:
     score = 100
     impact_5 = abs(row["impact_5pct"])
@@ -152,6 +164,9 @@ def add_scenarios(summary: pd.DataFrame) -> pd.DataFrame:
         ),
         axis=1,
     )
+    urgency = result.apply(lambda r: classify_urgency(r["days_to_due"], r["impact_5pct"]), axis=1)
+    result["urgency_level"] = urgency.map(lambda x: x[0])
+    result["urgency_message"] = urgency.map(lambda x: x[1])
     result["fx_health_score"] = result.apply(calculate_health_score, axis=1)
     return result.sort_values(["currency", "type"])
 
@@ -178,6 +193,7 @@ def generate_summary_text(row) -> str:
         f"- Total exposure: {row['total_amount']:,.0f} {row['currency']}  \n"
         f"- Timing: {due_text}  \n"
         f"- A 5% weakening in AUD could {effect_text} by about **{format_currency(abs(row['impact_5pct']))}**  \n"
+        f"- Urgency: **{row['urgency_level'].upper()}** — {row['urgency_message']}  \n"
         f"- Suggested hedge range: **{row['suggested_hedge_range']}**  \n"
         f"- FX Health Score: **{row['fx_health_score']}/100**"
     )
@@ -305,6 +321,7 @@ for col in [
 
 scenario_display["total_amount"] = scenario_display["total_amount"].map(lambda x: f"{x:,.0f}")
 scenario_display["avg_rate"] = scenario_display["avg_rate"].map(lambda x: f"{x:.4f}")
+scenario_display["urgency_level"] = scenario_display["urgency_level"].str.upper()
 
 st.dataframe(
     scenario_display[
@@ -318,6 +335,8 @@ st.dataframe(
             "current_aud_value",
             "impact_5pct",
             "impact_10pct",
+            "urgency_level",
+            "urgency_message",
             "suggested_hedge_range",
             "fx_health_score",
         ]
@@ -326,8 +345,11 @@ st.dataframe(
 )
 
 st.subheader("6. FX Health Check")
-health_display = scenario_df[["currency", "type", "fx_health_score", "impact_5pct", "suggested_hedge_range"]].copy()
+health_display = scenario_df[
+    ["currency", "type", "fx_health_score", "impact_5pct", "urgency_level", "suggested_hedge_range"]
+].copy()
 health_display["impact_5pct"] = health_display["impact_5pct"].map(lambda x: format_currency(abs(x)))
+health_display["urgency_level"] = health_display["urgency_level"].str.upper()
 st.dataframe(health_display, use_container_width=True)
 
 st.subheader("7. Plain-English Risk Summary")

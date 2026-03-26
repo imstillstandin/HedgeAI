@@ -29,6 +29,7 @@ def generate_summary_text(row: pd.Series) -> str:
         f"- Total exposure: {row['total_amount']:,.0f} {row['currency']}  \n"
         f"- Timing: {due_text}  \n"
         f"- A 5% weakening in AUD could {effect_text} by about **{format_currency(abs(row['impact_5pct']))}**  \n"
+        f"- Urgency: **{row['urgency_level'].upper()}** — {row['urgency_message']}  \n"
         f"- Suggested hedge range: **{row['suggested_hedge_range']}**  \n"
         f"- FX Health Score: **{row['fx_health_score']}/100**"
     )

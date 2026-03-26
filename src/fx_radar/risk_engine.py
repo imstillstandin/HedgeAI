@@ -48,6 +48,19 @@ def suggest_hedge_range(amount: float, days_to_due: int, exposure_type: str) -> 
     return "No suggestion"
 
 
+def classify_urgency(days_to_due: int, impact_5pct: float) -> tuple[str, str]:
+    """Classify urgency using settlement timing and 5% scenario impact."""
+    abs_impact = abs(impact_5pct)
+
+    if days_to_due <= 14 or abs_impact >= 20000:
+        return "critical", "Near-due and/or high financial impact — review hedge action now."
+    if days_to_due <= 30 or abs_impact >= 10000:
+        return "high", "Material near-term risk — consider partial hedging soon."
+    if days_to_due <= 60 or abs_impact >= 5000:
+        return "medium", "Moderate exposure risk — monitor closely and plan next steps."
+    return "low", "Lower immediate risk — continue monitoring."
+
+
 def calculate_health_score(row: pd.Series) -> int:
     """Calculate a simplified FX health score (0-100)."""
     score = 100
@@ -109,5 +122,14 @@ def add_scenarios(summary: pd.DataFrame) -> pd.DataFrame:
         ),
         axis=1,
     )
+    urgency = result.apply(
+        lambda r: classify_urgency(
+            days_to_due=r["days_to_due"],
+            impact_5pct=r["impact_5pct"],
+        ),
+        axis=1,
+    )
+    result["urgency_level"] = urgency.map(lambda x: x[0])
+    result["urgency_message"] = urgency.map(lambda x: x[1])
     result["fx_health_score"] = result.apply(calculate_health_score, axis=1)
     return result.sort_values(["currency", "type"])
