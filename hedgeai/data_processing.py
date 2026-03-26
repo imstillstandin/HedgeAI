@@ -2,6 +2,8 @@ from datetime import date
 
 import pandas as pd
 
+from hedgeai.risk import classify_urgency
+
 REQUIRED_COLUMNS = {"currency", "amount", "type", "due_date", "rate"}
 
 
@@ -54,7 +56,7 @@ def aggregate_exposures(df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def add_scenarios(summary: pd.DataFrame, scenario_fn, hedge_fn, health_fn) -> pd.DataFrame:
+def add_scenarios(summary: pd.DataFrame, scenario_fn, hedge_fn, health_fn, urgency_fn=classify_urgency) -> pd.DataFrame:
     rows = []
     today = date.today()
 
@@ -79,5 +81,8 @@ def add_scenarios(summary: pd.DataFrame, scenario_fn, hedge_fn, health_fn) -> pd
     result["suggested_hedge_range"] = result.apply(
         lambda r: hedge_fn(amount=r["total_amount"], days_to_due=r["days_to_due"], exposure_type=r["type"]), axis=1
     )
+    urgency = result.apply(lambda r: urgency_fn(r["days_to_due"], r["impact_5pct"]), axis=1)
+    result["urgency_level"] = urgency.map(lambda x: x[0])
+    result["urgency_message"] = urgency.map(lambda x: x[1])
     result["fx_health_score"] = result.apply(health_fn, axis=1)
     return result.sort_values(["currency", "type"])

@@ -1,6 +1,6 @@
 import unittest
 
-from hedgeai.risk import calculate_health_score, scenario_analysis, suggest_hedge_range
+from hedgeai.risk import calculate_health_score, classify_urgency, scenario_analysis, suggest_hedge_range
 
 
 class RiskLogicTests(unittest.TestCase):
@@ -28,6 +28,11 @@ class RiskLogicTests(unittest.TestCase):
         row = {"impact_5pct": 25000, "days_to_due": 20, "type": "payable"}
         score = calculate_health_score(row)
         self.assertEqual(score, 50)
+
+    def test_classify_urgency_outputs_expected_levels(self):
+        self.assertEqual(classify_urgency(days_to_due=10, impact_5pct=1000)[0], "critical")
+        self.assertEqual(classify_urgency(days_to_due=55, impact_5pct=1000)[0], "medium")
+        self.assertEqual(classify_urgency(days_to_due=120, impact_5pct=1000)[0], "low")
 
 
 if __name__ == "__main__":
