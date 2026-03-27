@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from .models import HedgeDecision
+
 
 def format_currency(value: float) -> str:
     """Format number as whole-dollar AUD string."""
@@ -28,8 +30,33 @@ def generate_summary_text(row: pd.Series) -> str:
         f"**{row['currency']} {row['type']} exposure**  \n"
         f"- Total exposure: {row['total_amount']:,.0f} {row['currency']}  \n"
         f"- Timing: {due_text}  \n"
-        f"- A 5% weakening in AUD could {effect_text} by about **{format_currency(abs(row['impact_5pct']))}**  \n"
-        f"- Urgency: **{row['urgency_level'].upper()}** — {row['urgency_message']}  \n"
-        f"- Suggested hedge range: **{row['suggested_hedge_range']}**  \n"
+        f"- Reference/booked exposure rates are distinct from live market spot rates.  \n"
+        f"- Risk analysis: A 5% weakening in AUD could {effect_text} by about **{format_currency(abs(row['impact_5pct']))}**  \n"
+        f"- Risk urgency: **{row['urgency_level'].upper()}** — {row['urgency_message']}  \n"
         f"- FX Health Score: **{row['fx_health_score']}/100**"
+    )
+
+
+def format_reason_codes(reason_codes: list[str]) -> list[str]:
+    """Convert machine reason codes into human-readable labels."""
+    return [code.replace("_", " ").title() for code in reason_codes]
+
+
+def format_execution_mode(execution_mode: str) -> str:
+    """Format decision execution mode label for display."""
+    return execution_mode.replace("_", " ").title()
+
+
+def format_instrument_label(instrument: str) -> str:
+    """Format instrument type for display."""
+    return instrument.replace("_", " ").title()
+
+
+def build_decision_summary(decision: HedgeDecision) -> str:
+    """Build a concise summary string for one hedge decision."""
+    ratio = f"{decision.final_hedge_ratio:.0%}"
+    return (
+        f"{decision.exposure_id}: {decision.exposure_type.title()} {decision.currency} | "
+        f"Hedge {ratio} | {format_instrument_label(decision.instrument)} | "
+        f"{format_execution_mode(decision.execution_mode)}"
     )
