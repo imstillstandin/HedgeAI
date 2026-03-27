@@ -11,6 +11,7 @@ sys.modules.setdefault("pandas", types.ModuleType("pandas"))
 
 from fx_radar.hedge_policy_engine import (
     build_hedge_decision,
+    build_portfolio_hedge_decisions,
     build_tranche_schedule,
     calculate_final_hedge_ratio,
     calculate_net_exposure,
@@ -222,3 +223,49 @@ def test_exposure_reference_rate_alias() -> None:
     exposure = _exposure(today, rate=1.2345)
     assert exposure.rate == 1.2345
     assert exposure.reference_rate == exposure.rate
+
+
+def test_build_portfolio_uses_per_currency_market_context_when_supplied() -> None:
+    today = date(2026, 3, 27)
+    profile = _business_profile(gross_margin_pct=18.0, minimum_margin_pct=13.0)
+    default_market = _market_context(
+        pair="AUD/USD",
+        volatility_30d_pct=3.0,
+        pair_change_30d_pct=0.0,
+        pair_change_90d_pct=0.0,
+    )
+    eur_market = _market_context(
+        pair="AUD/EUR",
+        volatility_30d_pct=10.0,
+        pair_change_30d_pct=-4.0,
+        pair_change_90d_pct=-6.0,
+    )
+
+    usd_exposure = _exposure(
+        today,
+        exposure_id="exp-usd",
+        currency="USD",
+        source_type="budget_forecast",
+        confidence=0.60,
+        amount=100_000.0,
+    )
+    eur_exposure = _exposure(
+        today,
+        exposure_id="exp-eur",
+        currency="EUR",
+        source_type="budget_forecast",
+        confidence=0.60,
+        amount=100_000.0,
+    )
+
+    decisions = build_portfolio_hedge_decisions(
+        exposures=[usd_exposure, eur_exposure],
+        business_profile=profile,
+        market_context=default_market,
+        market_context_by_currency={"EUR": eur_market},
+        today=today,
+    )
+
+    by_id = {decision.exposure_id: decision for decision in decisions}
+    assert by_id["exp-usd"].final_hedge_ratio == 0.60
+    assert by_id["exp-eur"].final_hedge_ratio == 0.65

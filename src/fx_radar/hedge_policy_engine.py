@@ -391,6 +391,7 @@ def build_portfolio_hedge_decisions(
     business_profile: BusinessProfile,
     market_context: MarketContext,
     today: date,
+    market_context_by_currency: Optional[dict[str, MarketContext]] = None,
 ) -> list[HedgeDecision]:
     """Build deterministic hedge decisions for all supplied exposures."""
 
@@ -398,7 +399,11 @@ def build_portfolio_hedge_decisions(
         build_hedge_decision(
             exposure=exposure,
             business_profile=business_profile,
-            market_context=market_context,
+            market_context=(
+                market_context_by_currency.get(exposure.currency.upper(), market_context)
+                if market_context_by_currency
+                else market_context
+            ),
             today=today,
         )
         for exposure in exposures

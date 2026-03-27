@@ -4,7 +4,7 @@ from datetime import date
 
 from fx_radar.hedge_policy_engine import build_portfolio_hedge_decisions
 from fx_radar.models import BusinessProfile, ExposureRecord, HedgeDecision, MarketContext
-from fx_radar.market_data import MarketDataError, get_market_context
+from fx_radar.market_data import MarketDataError, get_market_context, parse_currency_pair
 from fx_radar.presentation import (
     build_decision_summary,
     format_execution_mode,
@@ -140,8 +140,8 @@ def build_business_profile() -> BusinessProfile:
     )
 
 
-def build_market_context() -> MarketContext:
-    """Build market context using live market data by default with optional override."""
+def build_market_context() -> tuple[MarketContext, str, bool]:
+    """Build primary market context and return provider/override metadata."""
     with st.sidebar:
         st.header("Market Data")
         pair = st.selectbox(
@@ -162,7 +162,7 @@ def build_market_context() -> MarketContext:
             market_data_error = str(exc)
 
     if live_context is not None and not manual_override:
-        return live_context
+        return live_context, provider_name, manual_override
 
     with st.sidebar:
         if market_data_error:
@@ -175,7 +175,8 @@ def build_market_context() -> MarketContext:
         chg_30d = st.number_input("Manual pair change 30d %", value=0.0, step=0.1)
         chg_90d = st.number_input("Manual pair change 90d %", value=0.0, step=0.1)
 
-    return MarketContext(
+    return (
+        MarketContext(
         pair=pair_value,
         spot_rate=spot_rate,
         volatility_30d_pct=vol_30d,
@@ -183,7 +184,58 @@ def build_market_context() -> MarketContext:
         pair_change_30d_pct=chg_30d,
         pair_change_90d_pct=chg_90d,
         forward_points={30: 0.0, 90: 0.0, 180: 0.0, 365: 0.0},
+        ),
+        provider_name,
+        manual_override,
     )
+
+
+def build_market_context_by_currency(
+    exposures: list[ExposureRecord],
+    primary_context: MarketContext,
+    provider_name: str,
+) -> dict[str, MarketContext]:
+    """Build per-currency market context, falling back to primary context if needed."""
+
+    context_by_currency: dict[str, MarketContext] = {}
+    try:
+        home_ccy, quote_ccy = parse_currency_pair(primary_context.pair)
+    except ValueError:
+        home_ccy, quote_ccy = ("AUD", exposures[0].currency.upper()) if exposures else ("AUD", "USD")
+    context_by_currency[quote_ccy] = primary_context
+    fallback_currencies: list[str] = []
+
+    for exposure in exposures:
+        currency = exposure.currency.upper()
+        if currency in context_by_currency:
+            continue
+
+        pair = f"{home_ccy}/{currency}"
+        try:
+            context_by_currency[currency] = get_market_context(
+                pair=pair,
+                provider_name=provider_name,
+            )
+        except (MarketDataError, ValueError):
+            fallback_currencies.append(currency)
+            context_by_currency[currency] = MarketContext(
+                pair=pair,
+                spot_rate=primary_context.spot_rate,
+                volatility_30d_pct=primary_context.volatility_30d_pct,
+                volatility_90d_pct=primary_context.volatility_90d_pct,
+                pair_change_30d_pct=primary_context.pair_change_30d_pct,
+                pair_change_90d_pct=primary_context.pair_change_90d_pct,
+                forward_points=primary_context.forward_points,
+            )
+
+    if fallback_currencies:
+        st.warning(
+            "Unable to fetch live market context for: "
+            f"{', '.join(sorted(set(fallback_currencies)))}. "
+            f"Using {primary_context.pair} context as fallback for those currencies."
+        )
+
+    return context_by_currency
 
 
 def build_exposure_records(df: pd.DataFrame) -> list[ExposureRecord]:
@@ -409,7 +461,7 @@ for _, row in scenario_df.iterrows():
     st.markdown("---")
 
 business_profile = build_business_profile()
-market_context = build_market_context()
+market_context, market_data_provider_name, _ = build_market_context()
 st.subheader("Market Context")
 mc1, mc2, mc3, mc4, mc5 = st.columns(5)
 mc1.metric("Current Market Spot Rate", f"{market_context.spot_rate:.4f}")
@@ -419,10 +471,16 @@ mc4.metric("30d Vol", f"{market_context.volatility_30d_pct:.2f}%")
 mc5.metric("90d Vol", f"{market_context.volatility_90d_pct:.2f}%")
 
 exposure_records = build_exposure_records(df)
+market_context_by_currency = build_market_context_by_currency(
+    exposures=exposure_records,
+    primary_context=market_context,
+    provider_name=market_data_provider_name,
+)
 hedge_decisions = build_portfolio_hedge_decisions(
     exposures=exposure_records,
     business_profile=business_profile,
     market_context=market_context,
+    market_context_by_currency=market_context_by_currency,
     today=date.today(),
 )
 render_hedge_decisions(hedge_decisions)

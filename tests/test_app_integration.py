@@ -54,6 +54,14 @@ def test_app_imports_and_uses_market_data_layer() -> None:
     assert called is True
 
 
+def test_app_builds_per_currency_market_context_for_policy_decisions() -> None:
+    app_source = Path("app.py").read_text(encoding="utf-8")
+
+    assert "def build_market_context_by_currency(" in app_source
+    assert "market_context_by_currency = build_market_context_by_currency(" in app_source
+    assert "market_context_by_currency=market_context_by_currency" in app_source
+
+
 def test_app_imports_risk_engine_functions_and_does_not_redefine_them() -> None:
     module = _app_ast()
     app_source = Path("app.py").read_text(encoding="utf-8")
