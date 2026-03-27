@@ -1,8 +1,9 @@
-"""FX risk and hedging calculations."""
+"""FX risk analysis and scoring calculations."""
 
 from __future__ import annotations
 
 from datetime import date
+import warnings
 
 import pandas as pd
 
@@ -30,22 +31,14 @@ def scenario_analysis(amount: float, rate: float) -> dict[str, float]:
 
 
 def suggest_hedge_range(amount: float, days_to_due: int, exposure_type: str) -> str:
-    """Provide a simple hedge-range suggestion based on size and timing."""
-    if exposure_type == "payable":
-        if amount >= 100000 and days_to_due <= 60:
-            return "40% to 60%"
-        if amount >= 50000 and days_to_due <= 90:
-            return "20% to 40%"
-        return "Monitor or low hedge need"
-
-    if exposure_type == "receivable":
-        if amount >= 100000 and days_to_due <= 60:
-            return "30% to 50%"
-        if amount >= 50000 and days_to_due <= 90:
-            return "15% to 30%"
-        return "Monitor or low hedge need"
-
-    return "No suggestion"
+    """Deprecated: hedge recommendations are owned by ``hedge_policy_engine``."""
+    warnings.warn(
+        "suggest_hedge_range is deprecated. Use hedge_policy_engine for hedge decisions.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    _ = (amount, days_to_due, exposure_type)
+    return "Deprecated: use deterministic hedge policy engine."
 
 
 def classify_urgency(days_to_due: int, impact_5pct: float) -> tuple[str, str]:
@@ -85,7 +78,7 @@ def calculate_health_score(row: pd.Series) -> int:
 
 
 def add_scenarios(summary: pd.DataFrame) -> pd.DataFrame:
-    """Add scenario, hedge suggestion, and health score to grouped exposures."""
+    """Add scenario metrics, urgency, and health score to grouped exposures."""
     rows: list[dict] = []
     today = date.today()
 
@@ -114,14 +107,6 @@ def add_scenarios(summary: pd.DataFrame) -> pd.DataFrame:
     if result.empty:
         return result
 
-    result["suggested_hedge_range"] = result.apply(
-        lambda r: suggest_hedge_range(
-            amount=r["total_amount"],
-            days_to_due=r["days_to_due"],
-            exposure_type=r["type"],
-        ),
-        axis=1,
-    )
     urgency = result.apply(
         lambda r: classify_urgency(
             days_to_due=r["days_to_due"],
