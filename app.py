@@ -112,29 +112,33 @@ def build_hedge_decisions(scenario_df: pd.DataFrame) -> list[dict]:
     return decisions
 
 
+def build_decision_summary(decision: dict) -> str:
+    return f"{decision['currency']} {decision['type']} — {decision['instrument']}"
+
+
 def render_hedge_decisions(decisions: list[dict]) -> None:
     for decision in decisions:
-        with st.container(border=True):
-            st.markdown(f"**{decision['currency']} {decision['type']} hedge decision**")
+        with st.container():
+            st.markdown(f"### {build_decision_summary(decision)}")
 
             col1, col2, col3, col4 = st.columns(4)
-            col1.metric("Hedge ratio", f"{decision['hedge_ratio']:.0%}")
-            col2.metric("Hedge amount", format_currency(decision["hedge_amount"]))
+            col1.metric("Hedge Ratio", f"{decision['hedge_ratio']:.0%}")
+            col2.metric("Hedge Amount", f"{decision['hedge_amount']:,.0f} {decision['currency']}")
             col3.metric("Instrument", decision["instrument"])
-            col4.metric("Execution mode", decision["execution_mode"])
+            col4.metric("Action", decision["execution_mode"])
 
-            st.markdown("**Reason codes**")
-            st.markdown("\n".join(f"- {reason}" for reason in decision["reason_codes"]))
-
-            st.markdown("**Summary**")
-            st.markdown(decision["summary_text"])
+            st.caption(f"Reasons: {', '.join(decision['reason_codes'])}")
+            st.caption(decision["summary_text"])
 
             if decision["tranche_schedule"]:
                 tranche_display = pd.DataFrame(decision["tranche_schedule"])
-                tranche_display["amount"] = tranche_display["amount"].map(format_currency)
+                tranche_display["amount"] = tranche_display["amount"].map(
+                    lambda amount: f"{amount:,.0f} {decision['currency']}"
+                )
                 tranche_display["ratio"] = tranche_display["ratio"].map(lambda value: f"{value:.0%}")
-                st.markdown("**Tranche schedule**")
                 st.dataframe(tranche_display, use_container_width=True, hide_index=True)
+
+            st.divider()
 
 with st.sidebar:
     st.header("Manual Exposure Entry")
