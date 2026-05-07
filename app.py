@@ -1,201 +1,140 @@
-import streamlit as st
 import pandas as pd
-from datetime import date
+import streamlit as st
+
+from hedgeai.data_processing import add_scenarios, aggregate_exposures, clean_dataframe
+from hedgeai.presentation import build_demo_data, format_currency
+from src.fx_radar.presentation import generate_summary_text
+from hedgeai.risk import calculate_health_score, scenario_analysis, suggest_hedge_range
 
 st.set_page_config(page_title="FX Risk Radar", layout="wide")
 
-REQUIRED_COLUMNS = {"currency", "amount", "type", "due_date", "rate"}
+st.title("FX Risk Radar")
+st.caption("Upload FX exposures, quantify the risk, and get a practical hedge suggestion.")
 
 
-def validate_dataframe(df: pd.DataFrame):
-    missing = REQUIRED_COLUMNS - set(df.columns)
-    if missing:
-        return False, f"Missing columns: {', '.join(sorted(missing))}"
-    return True, "OK"
+SOURCE_TYPE_OPTIONS = [
+    "invoice",
+    "signed_po",
+    "loan_repayment",
+    "executed_contract",
+    "budget_forecast",
+    "subscription_forecast",
+    "sales_pipeline_weighted",
+    "inventory_plan",
+]
 
 
-def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    df.columns = [c.lower().strip() for c in df.columns]
+def build_app_demo_data() -> pd.DataFrame:
+    demo_df = build_demo_data().copy()
+    demo_df["source_type"] = "invoice"
+    demo_df["confidence"] = 1.0
+    return demo_df
 
-    valid, message = validate_dataframe(df)
-    if not valid:
-        raise ValueError(message)
 
-    df["currency"] = df["currency"].astype(str).str.upper().str.strip()
-    df["amount"] = pd.to_numeric(df["amount"], errors="raise")
-    df["rate"] = pd.to_numeric(df["rate"], errors="raise")
-    df["type"] = df["type"].astype(str).str.lower().str.strip()
-    df["due_date"] = pd.to_datetime(df["due_date"], errors="raise").dt.date
+def build_exposure_records(exposures_df: pd.DataFrame) -> list[dict]:
+    records = []
+    for _, row in exposures_df.iterrows():
+        source_type = row.get("source_type", "invoice")
+        confidence = row.get("confidence", 1.0)
 
-    if not df["type"].isin(["payable", "receivable"]).all():
-        invalid_types = df.loc[~df["type"].isin(["payable", "receivable"]), "type"].unique()
-        raise ValueError(
-            f"type column must contain only 'payable' or 'receivable'. Found: {', '.join(map(str, invalid_types))}"
+        if pd.isna(source_type) or not source_type:
+            source_type = "invoice"
+        if pd.isna(confidence):
+            confidence = 1.0
+
+        records.append(
+            {
+                "currency": row["currency"],
+                "amount": row["amount"],
+                "type": row["type"],
+                "due_date": row["due_date"],
+                "rate": row["rate"],
+                "source_type": source_type,
+                "confidence": confidence,
+            }
         )
-
-    if (df["amount"] <= 0).any():
-        raise ValueError("All amounts must be greater than zero.")
-
-    if (df["rate"] <= 0).any():
-        raise ValueError("All rates must be greater than zero.")
-
-    return df
+    return records
 
 
-def aggregate_exposures(df: pd.DataFrame) -> pd.DataFrame:
-    grouped = (
-        df.groupby(["currency", "type"], as_index=False)
-        .agg(
-            total_amount=("amount", "sum"),
-            avg_rate=("rate", "mean"),
-            nearest_due_date=("due_date", "min"),
-            line_count=("amount", "count"),
-        )
-        .sort_values(["currency", "type"])
-    )
-    return grouped
+def _hedge_ratio_from_range(hedge_range: str) -> float:
+    if "%" not in hedge_range:
+        return 0.0
+
+    percentages = []
+    for token in hedge_range.replace("%", "").replace("to", " ").split():
+        if token.isdigit():
+            percentages.append(float(token) / 100)
+
+    return max(percentages) if percentages else 0.0
 
 
-def scenario_analysis(amount: float, rate: float):
-    current_aud = amount / rate
+def build_hedge_decisions(scenario_df: pd.DataFrame) -> list[dict]:
+    decisions = []
+    for _, row in scenario_df.iterrows():
+        hedge_ratio = _hedge_ratio_from_range(row["suggested_hedge_range"])
+        hedge_amount = row["total_amount"] * hedge_ratio
+        instrument = "Forward contract" if hedge_ratio else "No hedge instrument"
+        execution_mode = "Dealer-assisted" if hedge_ratio else "Monitor only"
+        reason_codes = [
+            f"{row['currency']} {row['type']}",
+            f"{row['days_to_due']} days to due date",
+            f"{format_currency(abs(row['impact_5pct']))} 5% scenario impact",
+        ]
 
-    rate_5_down = rate * 0.95
-    rate_10_down = rate * 0.90
+        if row["fx_health_score"] < 70:
+            reason_codes.append("Lower FX health score")
+        if hedge_ratio == 0:
+            reason_codes.append("Policy outcome: monitor")
 
-    aud_5_down = amount / rate_5_down
-    aud_10_down = amount / rate_10_down
+        tranche_schedule = []
+        if hedge_ratio:
+            tranche_schedule.append(
+                {
+                    "timing": "Now",
+                    "amount": hedge_amount,
+                    "ratio": hedge_ratio,
+                }
+            )
 
-    impact_5 = aud_5_down - current_aud
-    impact_10 = aud_10_down - current_aud
-
-    return {
-        "current_aud_value": round(current_aud, 2),
-        "aud_value_if_aud_weakens_5pct": round(aud_5_down, 2),
-        "aud_value_if_aud_weakens_10pct": round(aud_10_down, 2),
-        "impact_5pct": round(impact_5, 2),
-        "impact_10pct": round(impact_10, 2),
-    }
-
-
-def suggest_hedge_range(amount: float, days_to_due: int, exposure_type: str) -> str:
-    if exposure_type == "payable":
-        if amount >= 100000 and days_to_due <= 60:
-            return "40% to 60%"
-        if amount >= 50000 and days_to_due <= 90:
-            return "20% to 40%"
-        return "Monitor or low hedge need"
-
-    if exposure_type == "receivable":
-        if amount >= 100000 and days_to_due <= 60:
-            return "30% to 50%"
-        if amount >= 50000 and days_to_due <= 90:
-            return "15% to 30%"
-        return "Monitor or low hedge need"
-
-    return "No suggestion"
-
-
-def calculate_health_score(row) -> int:
-    score = 100
-    impact_5 = abs(row["impact_5pct"])
-
-    if impact_5 > 20000:
-        score -= 30
-    elif impact_5 > 10000:
-        score -= 20
-    elif impact_5 > 5000:
-        score -= 10
-
-    if row["days_to_due"] <= 30:
-        score -= 15
-    elif row["days_to_due"] <= 60:
-        score -= 10
-
-    if row["type"] == "payable":
-        score -= 5
-
-    return max(score, 0)
-
-
-def add_scenarios(summary: pd.DataFrame) -> pd.DataFrame:
-    rows = []
-    today = date.today()
-
-    for _, row in summary.iterrows():
-        scenarios = scenario_analysis(
-            amount=row["total_amount"],
-            rate=row["avg_rate"],
-        )
-
-        days_to_due = (row["nearest_due_date"] - today).days
-
-        rows.append(
+        decisions.append(
             {
                 "currency": row["currency"],
                 "type": row["type"],
-                "total_amount": row["total_amount"],
-                "avg_rate": round(row["avg_rate"], 4),
-                "nearest_due_date": row["nearest_due_date"],
-                "days_to_due": days_to_due,
-                "line_count": row["line_count"],
-                **scenarios,
+                "hedge_ratio": hedge_ratio,
+                "hedge_amount": hedge_amount,
+                "instrument": instrument,
+                "execution_mode": execution_mode,
+                "reason_codes": reason_codes,
+                "summary_text": generate_summary_text(row),
+                "tranche_schedule": tranche_schedule,
             }
         )
-
-    result = pd.DataFrame(rows)
-    result["suggested_hedge_range"] = result.apply(
-        lambda r: suggest_hedge_range(
-            amount=r["total_amount"],
-            days_to_due=r["days_to_due"],
-            exposure_type=r["type"],
-        ),
-        axis=1,
-    )
-    result["fx_health_score"] = result.apply(calculate_health_score, axis=1)
-    return result.sort_values(["currency", "type"])
+    return decisions
 
 
-def format_currency(value: float) -> str:
-    return f"${value:,.0f}"
+def render_hedge_decisions(decisions: list[dict]) -> None:
+    for decision in decisions:
+        with st.container(border=True):
+            st.markdown(f"**{decision['currency']} {decision['type']} hedge decision**")
 
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Hedge ratio", f"{decision['hedge_ratio']:.0%}")
+            col2.metric("Hedge amount", format_currency(decision["hedge_amount"]))
+            col3.metric("Instrument", decision["instrument"])
+            col4.metric("Execution mode", decision["execution_mode"])
 
-def generate_summary_text(row) -> str:
-    if row["type"] == "payable":
-        effect_text = "increase your AUD cost"
-    else:
-        effect_text = "increase your AUD value received"
+            st.markdown("**Reason codes**")
+            st.markdown("\n".join(f"- {reason}" for reason in decision["reason_codes"]))
 
-    if row["days_to_due"] < 0:
-        due_text = f"{abs(row['days_to_due'])} days overdue/past due"
-    elif row["days_to_due"] == 0:
-        due_text = "due today"
-    else:
-        due_text = f"due in {row['days_to_due']} days"
+            st.markdown("**Summary**")
+            st.markdown(decision["summary_text"])
 
-    return (
-        f"**{row['currency']} {row['type']} exposure**  \n"
-        f"- Total exposure: {row['total_amount']:,.0f} {row['currency']}  \n"
-        f"- Timing: {due_text}  \n"
-        f"- A 5% weakening in AUD could {effect_text} by about **{format_currency(abs(row['impact_5pct']))}**  \n"
-        f"- Suggested hedge range: **{row['suggested_hedge_range']}**  \n"
-        f"- FX Health Score: **{row['fx_health_score']}/100**"
-    )
-
-
-def build_demo_data() -> pd.DataFrame:
-    return pd.DataFrame(
-        [
-            {"currency": "USD", "amount": 180000, "type": "payable", "due_date": "2026-04-20", "rate": 0.66},
-            {"currency": "USD", "amount": 95000, "type": "payable", "due_date": "2026-05-18", "rate": 0.66},
-            {"currency": "EUR", "amount": 70000, "type": "receivable", "due_date": "2026-04-28", "rate": 0.61},
-            {"currency": "GBP", "amount": 30000, "type": "payable", "due_date": "2026-05-05", "rate": 0.49},
-        ]
-    )
-
-
-st.title("FX Risk Radar")
-st.caption("Upload FX exposures, quantify the risk, and get a practical hedge suggestion.")
+            if decision["tranche_schedule"]:
+                tranche_display = pd.DataFrame(decision["tranche_schedule"])
+                tranche_display["amount"] = tranche_display["amount"].map(format_currency)
+                tranche_display["ratio"] = tranche_display["ratio"].map(lambda value: f"{value:.0%}")
+                st.markdown("**Tranche schedule**")
+                st.dataframe(tranche_display, use_container_width=True, hide_index=True)
 
 with st.sidebar:
     st.header("Manual Exposure Entry")
@@ -205,9 +144,11 @@ with st.sidebar:
     manual_type = st.selectbox("Type", ["payable", "receivable"])
     manual_due_date = st.date_input("Due date")
     manual_rate = st.number_input("Rate (e.g. AUD/USD)", min_value=0.0001, value=0.66, step=0.0001, format="%.4f")
+    manual_source_type = st.selectbox("Source type", SOURCE_TYPE_OPTIONS, index=0)
+    manual_confidence = st.slider("Confidence", min_value=0.0, max_value=1.0, value=1.0, step=0.05)
 
     if st.button("Use Demo Data"):
-        st.session_state["manual_df"] = build_demo_data()
+        st.session_state["manual_df"] = build_app_demo_data()
 
     if st.button("Add Manual Exposure"):
         manual_df = pd.DataFrame(
@@ -218,6 +159,8 @@ with st.sidebar:
                     "type": manual_type,
                     "due_date": manual_due_date,
                     "rate": manual_rate,
+                    "source_type": manual_source_type,
+                    "confidence": manual_confidence,
                 }
             ]
         )
@@ -261,11 +204,18 @@ except Exception as e:
     st.error(f"Data validation error: {e}")
     st.stop()
 
+exposure_records = build_exposure_records(df)
+
 st.subheader("2. Validated Input Data")
 st.dataframe(df, use_container_width=True)
 
 summary = aggregate_exposures(df)
-scenario_df = add_scenarios(summary)
+scenario_df = add_scenarios(
+    summary,
+    scenario_fn=scenario_analysis,
+    hedge_fn=suggest_hedge_range,
+    health_fn=calculate_health_score,
+)
 
 st.subheader("3. Key Metrics")
 total_payables = scenario_df.loc[scenario_df["type"] == "payable", "current_aud_value"].sum()
@@ -293,7 +243,18 @@ display_summary["avg_rate"] = display_summary["avg_rate"].map(lambda x: f"{x:.4f
 st.dataframe(display_summary, use_container_width=True)
 
 st.subheader("5. Risk Scenarios")
-scenario_display = scenario_df.copy()
+selected_currencies = st.multiselect(
+    "Filter currencies",
+    options=sorted(scenario_df["currency"].unique()),
+    default=sorted(scenario_df["currency"].unique()),
+)
+
+if selected_currencies:
+    filtered_scenario_df = scenario_df[scenario_df["currency"].isin(selected_currencies)].copy()
+else:
+    filtered_scenario_df = scenario_df.copy()
+
+scenario_display = filtered_scenario_df.copy()
 for col in [
     "current_aud_value",
     "aud_value_if_aud_weakens_5pct",
@@ -305,6 +266,7 @@ for col in [
 
 scenario_display["total_amount"] = scenario_display["total_amount"].map(lambda x: f"{x:,.0f}")
 scenario_display["avg_rate"] = scenario_display["avg_rate"].map(lambda x: f"{x:.4f}")
+scenario_display = scenario_display.rename(columns={"avg_rate": "avg_reference_rate"})
 
 st.dataframe(
     scenario_display[
@@ -312,7 +274,7 @@ st.dataframe(
             "currency",
             "type",
             "total_amount",
-            "avg_rate",
+            "avg_reference_rate",
             "nearest_due_date",
             "days_to_due",
             "current_aud_value",
@@ -325,17 +287,32 @@ st.dataframe(
     use_container_width=True,
 )
 
+scenario_export = filtered_scenario_df.rename(columns={"avg_rate": "avg_reference_rate"})
+
+st.download_button(
+    "Download filtered scenario table as CSV",
+    data=scenario_export.to_csv(index=False).encode("utf-8"),
+    file_name="fx_risk_scenarios.csv",
+    mime="text/csv",
+)
+
 st.subheader("6. FX Health Check")
 health_display = scenario_df[["currency", "type", "fx_health_score", "impact_5pct", "suggested_hedge_range"]].copy()
 health_display["impact_5pct"] = health_display["impact_5pct"].map(lambda x: format_currency(abs(x)))
 st.dataframe(health_display, use_container_width=True)
 
-st.subheader("7. Plain-English Risk Summary")
-for _, row in scenario_df.iterrows():
-    st.markdown(generate_summary_text(row))
-    st.markdown("---")
+st.subheader("Market Context")
+st.write(
+    "Use these outputs as a business impact view of your current FX exposures. "
+    "The scenarios are deterministic policy checks based on uploaded exposure size, "
+    "timing, type, and reference rate — not live market forecasts."
+)
 
-st.subheader("8. What This Means")
+st.subheader("8. Deterministic Hedge Policy Decisions")
+st.caption(f"Policy engine evaluated {len(exposure_records)} normalized exposure records.")
+render_hedge_decisions(build_hedge_decisions(scenario_df))
+
+st.subheader("9. What This Means")
 st.write(
     "This report identifies your current foreign currency exposures, estimates the impact "
     "of FX market movements, and suggests a simple hedge range based on size and timing. "
@@ -344,10 +321,10 @@ st.write(
 
 with st.expander("Sample CSV format"):
     st.code(
-        """currency,amount,type,due_date,rate
-USD,150000,payable,2026-04-25,0.66
-USD,90000,payable,2026-05-15,0.66
-EUR,50000,receivable,2026-04-30,0.61
+        """currency,amount,type,due_date,rate,source_type,confidence
+USD,150000,payable,2026-04-25,0.66,invoice,1.0
+USD,90000,payable,2026-05-15,0.66,invoice,1.0
+EUR,50000,receivable,2026-04-30,0.61,invoice,1.0
 """,
         language="csv",
     )
